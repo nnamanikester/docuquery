@@ -1,45 +1,112 @@
-name: CI
+name: Release
+
+# When a pull request is merged into main:
+#   1. Read its release label and work out the next version.
+#   2. Lint and test.
+#   3. Publish to PyPI.
+#   4. Create the vX.Y.Z tag and a GitHub release.
 on:
   push:
     branches: [main]
-    tags: ["v*"]
-  pull_request:
+
+# One release at a time, so two merges cannot take the same version
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
-  check:
+  plan:
+    name: Plan the release
     runs-on: ubuntu-latest
-    services:
-      # A throwaway database for tests/test_database.py
-      postgres:
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_PASSWORD: test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 15
-    env:
-      DOCUQUERY_TEST_POSTGRES_URL: postgresql://postgres:test@localhost:5432/postgres
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - run: uv sync
-      - run: uv run ruff check
-      - run: uv run ruff format --check
-      - run: uv run pytest
+        with:
+          fetch-depth: 0 # the version is computed from the git tags
+
+      - name: Read the merged pull request
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "No pull request for this commit, so there is no release." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          label=$(gh pr view "$pr" --json labels --jq '.labels[].name' | grep '^release: ' | head -n 1 || true)
+          bump="${label#release: }"
+          case "$bump" in
+            major|minor|patch) ;;
+            *)
+              echo "Pull request #$pr has the label '${label:-none}', so there is no release." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+
+          version=$(bash .github/scripts/next-version.sh "$bump")
+          if git rev-parse --verify --quiet "refs/tags/v$version" > /dev/null; then
+            echo "::error::The tag v$version already exists."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Pull request #$pr ($label) releases **v$version**." >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: Tests
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    uses: ./.github/workflows/tests.yml
 
   publish:
-    needs: check
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: Publish to PyPI
+    needs: [plan, test]
     runs-on: ubuntu-latest
-    environment: pypi
+    environment:
+      name: pypi
+      url: https://pypi.org/project/docuquery/${{ needs.plan.outputs.version }}/
     permissions:
-      id-token: write
+      contents: read
+      id-token: write # trusted publishing
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - run: uv version "$VERSION" --frozen
       - run: uv build
-      - run: uv publish
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Tag and GitHub release
+    needs: [plan, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the tag and the release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Create the tag and the release
+        run: |
+          gh release create "v$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --generate-notes

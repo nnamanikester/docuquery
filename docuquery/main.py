@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 
@@ -11,7 +12,11 @@ def cli() -> None:
 
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
-
+    # PyTorch warns on macOS that a distributed-training feature is missing.
+    # DocuQuery does not use it, so hide the warning.
+    logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(
+        logging.ERROR
+    )
     ensure_env_variables()
     pass
 

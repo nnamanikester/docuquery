@@ -1,0 +1,128 @@
+name: Pull request
+
+# For each pull request to main:
+#   1. Make sure that it has exactly one release label. A new PR gets "release: patch".
+#   2. Lint and test.
+#   3. Publish a staging build to TestPyPI and install it from there.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  release-label:
+    name: Release label
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      bump: ${{ steps.label.outputs.bump }}
+      version: ${{ steps.version.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the version is computed from the git tags
+
+      - name: Give a new PR the default label
+        # Forks get a read-only token, so they cannot add labels
+        if: >-
+          github.event.action == 'opened' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          if ! gh pr view "$PR" --json labels --jq '.labels[].name' | grep -q '^release: '; then
+            gh pr edit "$PR" --add-label "release: patch"
+          fi
+
+      - name: Read the release label
+        id: label
+        run: |
+          labels=$(gh pr view "$PR" --json labels --jq '.labels[].name' | grep '^release: ' || true)
+          if [ "$(printf '%s' "$labels" | grep -c '^')" -ne 1 ]; then
+            echo "::error::Add exactly one label: release: major, release: minor, release: patch, or release: skip"
+            exit 1
+          fi
+          bump="${labels#release: }"
+          case "$bump" in
+            major|minor|patch|skip) ;;
+            *) echo "::error::Unknown release label: $labels"; exit 1 ;;
+          esac
+          echo "bump=$bump" >> "$GITHUB_OUTPUT"
+
+      - name: Work out the release version
+        id: version
+        if: steps.label.outputs.bump != 'skip'
+        run: |
+          version=$(bash .github/scripts/next-version.sh "${{ steps.label.outputs.bump }}")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Merging this pull request releases **v$version** to PyPI." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Note that there is no release
+        if: steps.label.outputs.bump == 'skip'
+        run: echo "Merging this pull request does not release a new version." >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: Tests
+    uses: ./.github/workflows/tests.yml
+
+  staging:
+    name: Publish to TestPyPI (staging)
+    needs: [release-label, test]
+    # Forks cannot get a publishing token, so their PRs skip staging
+    if: >-
+      needs.release-label.outputs.bump != 'skip' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/docuquery/${{ steps.version.outputs.version }}/
+    permissions:
+      contents: read
+      id-token: write # trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Set a unique staging version
+        id: version
+        # For example 0.1.1.dev12345678. Each run gets a new number,
+        # because TestPyPI does not accept the same version two times.
+        run: |
+          version="${{ needs.release-label.outputs.version }}.dev${{ github.run_id }}"
+          uv version "$version" --frozen
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - run: uv build
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Install from TestPyPI and run it
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          uv venv /tmp/staging --python 3.12
+          # Dependencies from PyPI (TestPyPI does not have real copies of them)
+          uv pip install --python /tmp/staging -r pyproject.toml
+          # DocuQuery itself from TestPyPI. The index can take a minute to update.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if uv pip install --python /tmp/staging --no-deps --refresh-package docuquery \
+                --index-url https://test.pypi.org/simple/ "docuquery==$VERSION"; then
+              break
+            fi
+            echo "Not on TestPyPI yet (attempt $attempt). Waiting 15 seconds."
+            sleep 15
+          done
+          /tmp/staging/bin/docuquery --version | grep -F "$VERSION"
+          /tmp/staging/bin/docuquery --help
