@@ -29,8 +29,7 @@ Answer: Your lease ends on 31 August 2027.
 8. [Commands](#8-commands)
 9. [Problems and solutions](#9-problems-and-solutions)
 10. [Privacy](#10-privacy)
-11. [Development](#11-development)
-12. [License](#12-license)
+11. [License](#11-license)
 
 ---
 
@@ -360,54 +359,8 @@ When you ask a question, DocuQuery sends these items to OpenAI:
 
 ---
 
-## 11. Development
-
-1. Get the source code:
-
-   ```bash
-   git clone https://github.com/nnamanikester/docuquery.git docuquery
-   cd docuquery
-   ```
-
-2. Install the dependencies:
-
-   ```bash
-   uv sync
-   ```
-
-3. Activate the virtual environment:
-
-   ```bash
-   source .venv/bin/activate        # macOS and Linux
-   .venv\Scripts\activate           # Windows
-   ```
-
-4. Run DocuQuery:
-
-   ```bash
-   docuquery --help
-   ```
-
-5. Before you commit, run the tests, then check and format the code:
-
-   ```bash
-   pytest
-   ruff check --fix
-   ruff format
-   ```
-
-The database tests run only when `DOCUQUERY_TEST_POSTGRES_URL` is set. To run them, start a separate test database:
-
-```bash
-docker run -d --rm --name docuquery-test -e POSTGRES_PASSWORD=test \
-  -p 55432:5432 pgvector/pgvector:pg17
-DOCUQUERY_TEST_POSTGRES_URL=postgresql://postgres:test@localhost:55432/postgres pytest
-```
-
-> **CAUTION:** The database tests delete all DocuQuery tables in the test database. Do not use a database that contains data that you want to keep.
-
----
-
-## 12. License
+## 11. License
 
 DocuQuery is available under the MIT License. Read the `LICENSE` file.
+
+To help develop DocuQuery, read the [contributing guide](https://github.com/nnamanikester/docuquery/blob/main/CONTRIBUTING.md).
