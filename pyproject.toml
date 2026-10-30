@@ -1,0 +1,104 @@
+[project]
+name = "docuquery"
+version = "0.1.0"
+description = "A local file RAG engine CLI tool"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "John Nnamani" }]
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.5.0",
+    "openai>=3.40.0",
+    "pgvector>=0.5.1",
+    "psycopg>=3.3.6",
+    "pypdf>=6.21.4",
+    "sentence-transformers>=6.2.0",
+]
+keywords = ["rag", "cli", "pdf", "pgvector", "openai", "documents", "search"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Processing :: Indexing",
+]
+
+
+[project.urls]
+Homepage = "https://github.com/nnamanikester/docuquery"
+Issues = "https://github.com/nnamanikester/docuquery/issues"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.7.0",
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+]
+
+[project.scripts]
+docuquery = "docuquery.main:cli"
+
+[build-system]
+requires = ["flit_core<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["."]
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "C4",    # flake8-comprehensions
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff-specific rules
+    "PTH",   # flake8-use-pathlib
+    "PL",    # pylint
+    "ANN",   # flake8-annotations
+    "S",     # flake8-bandit (security)
+    "T20",   # flake8-print
+    "PT",    # flake8-pytest-style
+    "RET",   # flake8-return
+    "ARG",   # flake8-unused-arguments
+    "ERA",   # eradicate (commented-out code)
+]
+ignore = [
+    "E501",  # line length is handled by the formatter
+    "PLR0913",  # too many arguments: list_documents has many filters on purpose
+    "PLR0917",  # too many positional arguments
+]
+fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"docuquery/main.py" = ["PLC0415"]  # imports run after the config file is loaded (see main.py)
+"tests/**/*.py" = [
+    "S101",    # assert is fine in tests
+    "ANN",     # annotations not required in tests
+    "PLR2004", # magic values are fine in tests
+    "S603",    # tests run Python in a subprocess on purpose
+    "S311",    # random is fine for test data
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["docuquery"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
